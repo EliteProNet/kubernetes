@@ -1,0 +1,23 @@
+{
+   "kind":"Service",
+   "apiVersion":"v1",
+   "metadata":{
+      "name":"elk",
+      "labels":{
+         "app":"elk"
+      }
+   },
+   "spec":{
+      "ports": [
+         {
+           "name":"elk",
+           "port":9200,
+           "targetPort":"elastic-search"
+         }
+      ],
+      "selector":{
+         "app":"elk"
+      },
+      "type": "LoadBalancer"
+   }
+}

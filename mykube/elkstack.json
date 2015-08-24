@@ -1,0 +1,37 @@
+{
+   "kind":"ReplicationController",
+   "apiVersion":"v1",
+   "metadata":{
+      "name":"elk",
+      "labels":{
+         "app":"elk"
+      }
+   },
+   "spec":{
+      "replicas":1,
+      "selector":{
+         "app":"elk"
+      },
+      "template":{
+         "metadata":{
+            "labels":{
+               "app":"elk"
+            }
+         },
+         "spec":{
+            "containers":[
+               {
+                  "name":"elk",
+                  "image":"lirancohen/epn_elk:latest",
+                  "ports":[
+                     {
+                        "name":"elastic-search",
+                        "containerPort":9200
+                     }
+                  ]
+               }
+            ]
+         }
+      }
+   }
+}

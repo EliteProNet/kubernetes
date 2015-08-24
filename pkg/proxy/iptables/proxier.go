@@ -130,7 +130,7 @@ type serviceInfo struct {
 	stickyMaxAgeSeconds int
 	endpoints           []string
 	// Deprecated, but required for back-compat (including e2e)
-	deprecatedPublicIPs []string
+	externalIPs []string
 }
 
 // returns a new serviceInfo struct
@@ -150,6 +150,7 @@ type Proxier struct {
 	iptables                    utiliptables.Interface
 	haveReceivedServiceUpdate   bool // true once we've seen an OnServiceUpdate event
 	haveReceivedEndpointsUpdate bool // true once we've seen an OnEndpointsUpdate event
+	MasqueradeAll               bool
 }
 
 // Proxier implements ProxyProvider
@@ -160,7 +161,7 @@ var _ proxy.ProxyProvider = &Proxier{}
 // An error will be returned if iptables fails to update or acquire the initial lock.
 // Once a proxier is created, it will keep iptables up to date in the background and
 // will not terminate if a particular iptables call fails.
-func NewProxier(ipt utiliptables.Interface, exec utilexec.Interface, syncPeriod time.Duration) (*Proxier, error) {
+func NewProxier(ipt utiliptables.Interface, exec utilexec.Interface, syncPeriod time.Duration, MasqueradeAll bool) (*Proxier, error) {
 
 	// Set the route_localnet sysctl we need for
 	if err := setSysctl(sysctlRouteLocalnet, 1); err != nil {
@@ -175,58 +176,28 @@ func NewProxier(ipt utiliptables.Interface, exec utilexec.Interface, syncPeriod 
 		return nil, fmt.Errorf("can't set sysctl %s: %v", sysctlBridgeCallIptables, err)
 	}
 
-	// No turning back. Remove artifacts that might still exist from the userspace Proxier.
-	glog.V(2).Info("Tearing down userspace rules. Errors here are acceptable.")
-	tearDownUserspaceIptables(ipt)
-
 	return &Proxier{
-		serviceMap: make(map[proxy.ServicePortName]*serviceInfo),
-		syncPeriod: syncPeriod,
-		iptables:   ipt,
+		serviceMap:    make(map[proxy.ServicePortName]*serviceInfo),
+		syncPeriod:    syncPeriod,
+		iptables:      ipt,
+		MasqueradeAll: MasqueradeAll,
 	}, nil
 }
 
-// Chains from the userspace proxy
-// TODO: Remove these Chains and tearDownUserspaceIptables once the userspace Proxier has been removed.
-var iptablesContainerPortalChain utiliptables.Chain = "KUBE-PORTALS-CONTAINER"
-var iptablesHostPortalChain utiliptables.Chain = "KUBE-PORTALS-HOST"
-var iptablesContainerNodePortChain utiliptables.Chain = "KUBE-NODEPORT-CONTAINER"
-var iptablesHostNodePortChain utiliptables.Chain = "KUBE-NODEPORT-HOST"
-
-// tearDownUserspaceIptables removes all iptables rules and chains created by the userspace Proxier
-func tearDownUserspaceIptables(ipt utiliptables.Interface) {
-	// NOTE: Warning, this needs to be kept in sync with the userspace Proxier,
-	// we want to ensure we remove all of the iptables rules it creates.
-	// Currently they are all in iptablesInit()
-	// Delete Rules first, then Flush and Delete Chains
-	args := []string{"-m", "comment", "--comment", "handle ClusterIPs; NOTE: this must be before the NodePort rules"}
-	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainOutput, append(args, "-j", string(iptablesHostPortalChain))...); err != nil {
-		glog.Errorf("Error removing userspace rule: %v", err)
+// CleanupLeftovers removes all iptables rules and chains created by the Proxier
+// It returns true if an error was encountered. Errors are logged.
+func CleanupLeftovers(ipt utiliptables.Interface) (encounteredError bool) {
+	//TODO: actually tear down all rules and chains.
+	args := []string{"-j", "KUBE-SERVICES"}
+	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainOutput, args...); err != nil {
+		glog.Errorf("Error removing pure-iptables proxy rule: %v", err)
+		encounteredError = true
 	}
-	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainPrerouting, append(args, "-j", string(iptablesContainerPortalChain))...); err != nil {
-		glog.Errorf("Error removing userspace rule: %v", err)
+	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainPrerouting, args...); err != nil {
+		glog.Errorf("Error removing pure-iptables proxy rule: %v", err)
+		encounteredError = true
 	}
-	args = []string{"-m", "addrtype", "--dst-type", "LOCAL"}
-	args = append(args, "-m", "comment", "--comment", "handle service NodePorts; NOTE: this must be the last rule in the chain")
-	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainOutput, append(args, "-j", string(iptablesHostNodePortChain))...); err != nil {
-		glog.Errorf("Error removing userspace rule: %v", err)
-	}
-	if err := ipt.DeleteRule(utiliptables.TableNAT, utiliptables.ChainPrerouting, append(args, "-j", string(iptablesContainerNodePortChain))...); err != nil {
-		glog.Errorf("Error removing userspace rule: %v", err)
-	}
-
-	// flush and delete chains.
-	chains := []utiliptables.Chain{iptablesContainerPortalChain, iptablesHostPortalChain, iptablesHostNodePortChain, iptablesContainerNodePortChain}
-	for _, c := range chains {
-		// flush chain, then if sucessful delete, delete will fail if flush fails.
-		if err := ipt.FlushChain(utiliptables.TableNAT, c); err != nil {
-			glog.Errorf("Error flushing userspace chain: %v", err)
-		} else {
-			if err = ipt.DeleteChain(utiliptables.TableNAT, c); err != nil {
-				glog.Errorf("Error flushing userspace chain: %v", err)
-			}
-		}
-	}
+	return encounteredError
 }
 
 func (proxier *Proxier) sameConfig(info *serviceInfo, service *api.Service, port *api.ServicePort) bool {
@@ -236,7 +207,7 @@ func (proxier *Proxier) sameConfig(info *serviceInfo, service *api.Service, port
 	if !info.clusterIP.Equal(net.ParseIP(service.Spec.ClusterIP)) {
 		return false
 	}
-	if !ipsEqual(info.deprecatedPublicIPs, service.Spec.DeprecatedPublicIPs) {
+	if !ipsEqual(info.externalIPs, service.Spec.ExternalIPs) {
 		return false
 	}
 	if !api.LoadBalancerStatusEqual(&info.loadBalancerStatus, &service.Status.LoadBalancer) {
@@ -318,7 +289,7 @@ func (proxier *Proxier) OnServiceUpdate(allServices []api.Service) {
 			info.port = servicePort.Port
 			info.protocol = servicePort.Protocol
 			info.nodePort = servicePort.NodePort
-			info.deprecatedPublicIPs = service.Spec.DeprecatedPublicIPs
+			info.externalIPs = service.Spec.ExternalIPs
 			// Deep-copy in case the service instance changes
 			info.loadBalancerStatus = *api.LoadBalancerStatusDeepCopy(&service.Status.LoadBalancer)
 			info.sessionAffinityType = service.Spec.SessionAffinity
@@ -475,20 +446,9 @@ func (proxier *Proxier) syncProxyRules() error {
 		if _, err := proxier.iptables.EnsureChain(utiliptables.TableNAT, iptablesServicesChain); err != nil {
 			return err
 		}
-		comment := "kubernetes service portals; must be before nodeports"
+		comment := "kubernetes service portals"
 		args := []string{"-m", "comment", "--comment", comment, "-j", string(iptablesServicesChain)}
 		if _, err := proxier.iptables.EnsureRule(utiliptables.Prepend, utiliptables.TableNAT, chain, args...); err != nil {
-			return err
-		}
-	}
-	// Link the nodeports chain.
-	for _, chain := range inputChains {
-		if _, err := proxier.iptables.EnsureChain(utiliptables.TableNAT, iptablesNodePortsChain); err != nil {
-			return err
-		}
-		comment := "kubernetes service nodeports; must be after portals"
-		args := []string{"-m", "comment", "--comment", comment, "-m", "addrtype", "--dst-type", "LOCAL", "-j", string(iptablesNodePortsChain)}
-		if _, err := proxier.iptables.EnsureRule(utiliptables.Append, utiliptables.TableNAT, chain, args...); err != nil {
 			return err
 		}
 	}
@@ -547,16 +507,22 @@ func (proxier *Proxier) syncProxyRules() error {
 		activeChains[svcChain] = true
 
 		// Capture the clusterIP.
-		writeLine(rulesLines,
+		args := []string{
 			"-A", string(iptablesServicesChain),
 			"-m", "comment", "--comment", fmt.Sprintf("\"%s cluster IP\"", name.String()),
 			"-m", protocol, "-p", protocol,
 			"-d", fmt.Sprintf("%s/32", info.clusterIP.String()),
 			"--dport", fmt.Sprintf("%d", info.port),
-			"-j", string(svcChain))
+		}
+		if proxier.MasqueradeAll {
+			writeLine(rulesLines, append(args,
+				"-j", "MARK", "--set-xmark", fmt.Sprintf("%s/0xffffffff", iptablesMasqueradeMark))...)
+		}
+		writeLine(rulesLines, append(args,
+			"-j", string(svcChain))...)
 
 		// Capture externalIPs.
-		for _, externalIP := range info.deprecatedPublicIPs {
+		for _, externalIP := range info.externalIPs {
 			args := []string{
 				"-A", string(iptablesServicesChain),
 				"-m", "comment", "--comment", fmt.Sprintf("\"%s external IP\"", name.String()),
@@ -564,10 +530,23 @@ func (proxier *Proxier) syncProxyRules() error {
 				"-d", fmt.Sprintf("%s/32", externalIP),
 				"--dport", fmt.Sprintf("%d", info.port),
 			}
-			// We have to SNAT packets from external IPs.
+			// We have to SNAT packets to external IPs.
 			writeLine(rulesLines, append(args,
 				"-j", "MARK", "--set-xmark", fmt.Sprintf("%s/0xffffffff", iptablesMasqueradeMark))...)
-			writeLine(rulesLines, append(args,
+
+			// Allow traffic for external IPs that does not come from a bridge (i.e. not from a container)
+			// nor from a local process to be forwarded to the service.
+			// This rule roughly translates to "all traffic from off-machine".
+			// This is imperfect in the face of network plugins that might not use a bridge, but we can revisit that later.
+			externalTrafficOnlyArgs := append(args,
+				"-m", "physdev", "!", "--physdev-is-in",
+				"-m", "addrtype", "!", "--src-type", "LOCAL")
+			writeLine(rulesLines, append(externalTrafficOnlyArgs,
+				"-j", string(svcChain))...)
+			dstLocalOnlyArgs := append(args, "-m", "addrtype", "--dst-type", "LOCAL")
+			// Allow traffic bound for external IPs that happen to be recognized as local IPs to stay local.
+			// This covers cases like GCE load-balancers which get added to the local routing table.
+			writeLine(rulesLines, append(dstLocalOnlyArgs,
 				"-j", string(svcChain))...)
 		}
 
@@ -699,6 +678,14 @@ func (proxier *Proxier) syncProxyRules() error {
 			writeLine(rulesLines, "-X", chainString)
 		}
 	}
+
+	// Finally, tail-call to the nodeports chain.  This needs to be after all
+	// other service portal rules.
+	writeLine(rulesLines,
+		"-A", string(iptablesServicesChain),
+		"-m", "comment", "--comment", "\"kubernetes service nodeports; NOTE: this must be the last rule in this chain\"",
+		"-m", "addrtype", "--dst-type", "LOCAL",
+		"-j", string(iptablesNodePortsChain))
 
 	// Write the end-of-table marker.
 	writeLine(rulesLines, "COMMIT")

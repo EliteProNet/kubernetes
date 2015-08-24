@@ -80,8 +80,9 @@ if [[ "${KUBERNETES_PROVIDER}" == "aws" ]]; then
     : ${NUM_MINIONS:="100"}
     : ${GINKGO_TEST_ARGS:="--ginkgo.focus=\[Performance\ssuite\]"}
   else
-    : ${MASTER_SIZE:="t2.small"}
-    : ${NUM_MINIONS:="2"}
+    : ${MASTER_SIZE:="m3.large"}
+    : ${MINION_SIZE:="m3.large"}
+    : ${NUM_MINIONS:="3"}
   fi
 fi
 
@@ -209,6 +210,20 @@ case ${JOB_NAME} in
     NUM_MINIONS="6"
     ;;
 
+  # Runs all non-flaky tests on AWS in parallel.
+  kubernetes-e2e-aws-parallel)
+    : ${E2E_CLUSTER_NAME:="jenkins-aws-e2e-parallel"}
+    : ${E2E_NETWORK:="e2e-parallel"}
+    : ${GINKGO_PARALLEL:="y"}
+    : ${GINKGO_TEST_ARGS:="--ginkgo.skip=$(join_regex_allow_empty \
+          ${GCE_DEFAULT_SKIP_TESTS[@]:+${GCE_DEFAULT_SKIP_TESTS[@]}} \
+          ${GCE_PARALLEL_SKIP_TESTS[@]:+${GCE_PARALLEL_SKIP_TESTS[@]}} \
+          ${GCE_PARALLEL_FLAKY_TESTS[@]:+${GCE_PARALLEL_FLAKY_TESTS[@]}} \
+          )"}
+    # Override AWS defaults.
+    NUM_MINIONS="6"
+    ;;
+
   # Runs the flaky tests on GCE in parallel.
   kubernetes-e2e-gce-parallel-flaky)
     : ${E2E_CLUSTER_NAME:="parallel-flaky"}
@@ -248,6 +263,8 @@ case ${JOB_NAME} in
     MINION_SIZE="n1-standard-2"
     MINION_DISK_SIZE="50GB"
     NUM_MINIONS="100"
+    # Reduce logs verbosity
+    TEST_CLUSTER_LOG_LEVEL="--v=1"
     ;;
 
   # Runs tests on GCE soak cluster.

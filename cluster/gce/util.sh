@@ -247,9 +247,9 @@ function upload-server-tars() {
 #   MINION_NAMES
 function detect-minion-names {
   detect-project
-  MINION_NAMES=($(gcloud preview --project "${PROJECT}" instance-groups \
-    --zone "${ZONE}" instances --group "${NODE_INSTANCE_PREFIX}-group" list \
-    | cut -d'/' -f11))
+  MINION_NAMES=($(gcloud compute instance-groups managed list-instances \
+    "${NODE_INSTANCE_PREFIX}-group" --zone "${ZONE}" --project "${PROJECT}" \
+    --format=yaml | grep instance: | cut -d ' ' -f 2))
   echo "MINION_NAMES=${MINION_NAMES[*]}" >&2
 }
 
@@ -643,6 +643,15 @@ function kube-up {
     --type "${MASTER_DISK_TYPE}" \
     --size "${MASTER_DISK_SIZE}"
 
+  # Create disk for cluster registry if enabled
+  if [[ "${ENABLE_CLUSTER_REGISTRY}" == true && -n "${CLUSTER_REGISTRY_DISK}" ]]; then
+    gcloud compute disks create "${CLUSTER_REGISTRY_DISK}" \
+      --project "${PROJECT}" \
+      --zone "${ZONE}" \
+      --type "${CLUSTER_REGISTRY_DISK_TYPE_GCE}" \
+      --size "${CLUSTER_REGISTRY_DISK_SIZE}" &
+  fi
+
   # Generate a bearer token for this cluster. We push this separately
   # from the other cluster variables so that the client (this
   # computer) can forget it later. This should disappear with
@@ -709,7 +718,7 @@ function kube-up {
     METRICS+="--custom-metric-utilization metric=custom.cloudmonitoring.googleapis.com/kubernetes.io/memory/node_utilization,"
     METRICS+="utilization-target=${TARGET_NODE_UTILIZATION},utilization-target-type=GAUGE "
     echo "Creating node autoscaler."
-    gcloud preview autoscaler --zone "${ZONE}" create "${NODE_INSTANCE_PREFIX}-autoscaler" --target "${NODE_INSTANCE_PREFIX}-group" \
+    gcloud compute instance-groups managed set-autoscaling "${NODE_INSTANCE_PREFIX}-group" --zone "${ZONE}" --project $"{PROJECT}" \
         --min-num-replicas "${AUTOSCALER_MIN_NODES}" --max-num-replicas "${AUTOSCALER_MAX_NODES}" ${METRICS} || true
   fi
 
@@ -776,11 +785,11 @@ function kube-down {
 
   # Delete autoscaler for nodes if present.
   local autoscaler
-  autoscaler=( $(gcloud preview autoscaler --zone "${ZONE}" list \
-                 | awk 'NR >= 2 { print $1 }' \
-                 | grep "${NODE_INSTANCE_PREFIX}-autoscaler") )
-  if [[ "${autoscaler:-}" != "" ]]; then
-    gcloud preview autoscaler --zone "${ZONE}" delete "${NODE_INSTANCE_PREFIX}-autoscaler"
+  autoscaler=( $(gcloud compute instance-groups managed list --zone "${ZONE}" --project "${PROJECT}" \
+                 | grep "${NODE_INSTANCE_PREFIX}-group" \
+                 | awk '{print $7}') )
+  if [[ "${autoscaler:-}" == "yes" ]]; then
+    gcloud compute instance-groups managed stop-autoscaling "${NODE_INSTANCE_PREFIX}-group" --zone "${ZONE}" --project "${PROJECT}"
   fi
 
   # Get the name of the managed instance group template before we delete the
@@ -790,7 +799,7 @@ function kube-down {
 
   # The gcloud APIs don't return machine parseable error codes/retry information. Therefore the best we can
   # do is parse the output and special case particular responses we are interested in.
-  if gcloud compute instance-groups managed describe --project "${PROJECT}" --zone "${ZONE}" "${NODE_INSTANCE_PREFIX}-group" &>/dev/null; then
+  if gcloud compute instance-groups managed describe "${NODE_INSTANCE_PREFIX}-group" --project "${PROJECT}" --zone "${ZONE}" &>/dev/null; then
     deleteCmdOutput=$(gcloud compute instance-groups managed delete --zone "${ZONE}" \
       --project "${PROJECT}" \
       --quiet \
@@ -835,6 +844,17 @@ function kube-down {
       --quiet \
       --zone "${ZONE}" \
       "${MASTER_NAME}"-pd
+  fi
+
+  # Delete disk for cluster registry if enabled
+  if [[ "${ENABLE_CLUSTER_REGISTRY}" == true && -n "${CLUSTER_REGISTRY_DISK}" ]]; then
+    if gcloud compute disks describe "${CLUSTER_REGISTRY_DISK}" --zone "${ZONE}" --project "${PROJECT}" &>/dev/null; then
+      gcloud compute disks delete \
+        --project "${PROJECT}" \
+        --quiet \
+        --zone "${ZONE}" \
+        "${CLUSTER_REGISTRY_DISK}"
+    fi
   fi
 
   # Find out what minions are running.
@@ -952,6 +972,11 @@ function check-resources {
 
   if gcloud compute disks describe --project "${PROJECT}" "${MASTER_NAME}"-pd --zone "${ZONE}" &>/dev/null; then
     KUBE_RESOURCE_FOUND="Persistent disk ${MASTER_NAME}-pd"
+    return 1
+  fi
+
+  if gcloud compute disks describe --project "${PROJECT}" "${CLUSTER_REGISTRY_DISK}" --zone "${ZONE}" &>/dev/null; then
+    KUBE_RESOURCE_FOUND="Persistent disk ${CLUSTER_REGISTRY_DISK}"
     return 1
   fi
 

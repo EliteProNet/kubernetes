@@ -234,6 +234,11 @@ runTests() {
   kube::test::get_object_assert 'pod valid-pod' "{{$id_field}}" 'valid-pod'
   kube::test::get_object_assert 'pod/valid-pod' "{{$id_field}}" 'valid-pod'
   kube::test::get_object_assert 'pods/valid-pod' "{{$id_field}}" 'valid-pod'
+  # Repeat above test using jsonpath template
+  kube::test::get_object_jsonpath_assert pods "{.items[*]$id_field}" 'valid-pod'
+  kube::test::get_object_jsonpath_assert 'pod valid-pod' "{$id_field}" 'valid-pod'
+  kube::test::get_object_jsonpath_assert 'pod/valid-pod' "{$id_field}" 'valid-pod'
+  kube::test::get_object_jsonpath_assert 'pods/valid-pod' "{$id_field}" 'valid-pod'
   # Describe command should print detailed information
   kube::test::describe_object_assert pods 'valid-pod' "Name:" "Image(s):" "Node:" "Labels:" "Status:" "Replication Controllers"
   # Describe command (resource only) should print detailed information
@@ -628,6 +633,14 @@ __EOF__
   # Post-condition: 3 replicas
   kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '3'
 
+  ### Scale replication controller from JSON with replicas only
+  # Pre-condition: 3 replicas
+  kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '3'
+  # Command
+  kubectl scale  --replicas=2 -f examples/guestbook/frontend-controller.yaml "${kube_flags[@]}"
+  # Post-condition: 2 replicas
+  kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '2'
+
   ### Scale multiple replication controllers
   kubectl create -f examples/guestbook/redis-master-controller.yaml "${kube_flags[@]}"
   kubectl create -f examples/guestbook/redis-slave-controller.yaml "${kube_flags[@]}"
@@ -640,8 +653,8 @@ __EOF__
   kubectl delete rc redis-{master,slave} "${kube_flags[@]}"
 
   ### Expose replication controller as service
-  # Pre-condition: 3 replicas
-  kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '3'
+  # Pre-condition: 2 replicas
+  kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '2'
   # Command
   kubectl expose rc frontend --port=80 "${kube_flags[@]}"
   # Post-condition: service exists and the port is unnamed
@@ -794,8 +807,8 @@ __EOF__
     file="${KUBE_TEMP}/schema-${version}.json"
     curl -s "http://127.0.0.1:${API_PORT}/swaggerapi/api/${version}" > "${file}"
     [[ "$(grep "list of returned" "${file}")" ]]
-    [[ "$(grep "list of pods" "${file}")" ]]
-    [[ "$(grep "watch for changes to the described resources" "${file}")" ]]
+    [[ "$(grep "List of pods" "${file}")" ]]
+    [[ "$(grep "Watch for changes to the described resources" "${file}")" ]]
   fi
 
   kube::test::clear_all

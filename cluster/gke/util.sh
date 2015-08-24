@@ -113,6 +113,7 @@ function verify-prereqs() {
 #   CLUSTER_API_VERSION (optional)
 #   NUM_MINIONS
 #   MINION_SCOPES
+#   MACHINE_TYPE
 function kube-up() {
   echo "... in gke:kube-up()" >&2
   detect-project >&2
@@ -145,6 +146,7 @@ function kube-up() {
     "--network=${NETWORK}"
     "--scopes=${MINION_SCOPES}"
     "--cluster-version=${CLUSTER_API_VERSION}"
+    "--machine-type=${MACHINE_TYPE}"
   )
 
   # Bring up the cluster.
@@ -241,9 +243,10 @@ function detect-minion-names {
   echo "... in gke:detect-minion-names()" >&2
   detect-project
   detect-node-instance-group
-  MINION_NAMES=($(gcloud preview --project "${PROJECT}" instance-groups \
-    --zone "${ZONE}" instances --group "${NODE_INSTANCE_GROUP}" list --quiet \
-    | cut -d'/' -f11))
+  MINION_NAMES=($(gcloud compute instance-groups managed list-instances \
+    "${NODE_INSTANCE_GROUP}" --zone "${ZONE}" --project "${PROJECT}" \
+    --format=yaml | grep instance: | cut -d ' ' -f 2))
+
   echo "MINION_NAMES=${MINION_NAMES[*]}"
 }
 

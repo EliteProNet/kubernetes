@@ -586,21 +586,15 @@ var _ = Describe("Services", func() {
 		if len(service.Status.LoadBalancer.Ingress) != 1 {
 			Failf("got unexpected len(Status.LoadBalancer.Ingresss) for NodePort service: %v", service)
 		}
+
+		// TODO: Make this less of a hack.  Watch for events?
+		Logf("Waiting 2 minutes to give service time to settle after changing configuration")
+		time.Sleep(time.Second * 120)
+		service, err = waitForLoadBalancerIngress(f.Client, serviceName, f.Namespace.Name)
+		Expect(err).NotTo(HaveOccurred())
+
 		ingress2 := service.Status.LoadBalancer.Ingress[0]
-
-		// TODO: Fix the issue here: http://issue.k8s.io/11002
-		if providerIs("aws") {
-			// TODO: Make this less of a hack (or fix the underlying bug)
-			time.Sleep(time.Second * 120)
-			service, err = waitForLoadBalancerIngress(f.Client, serviceName, f.Namespace.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// We don't want the ingress point to change, but we should verify that the new ingress point still works
-			ingress2 = service.Status.LoadBalancer.Ingress[0]
-			Expect(ingress1).NotTo(Equal(ingress2))
-		} else {
-			Expect(ingress1).To(Equal(ingress2))
-		}
+		Expect(ingress1).To(Equal(ingress2))
 
 		By("hitting the pod through the service's updated NodePort")
 		testReachable(ip, nodePort2)
@@ -1372,7 +1366,7 @@ func verifyServeHostnameServiceUp(c *client.Client, host string, expectedPods []
 				passed = true
 				break
 			}
-			Logf("Expected pods: %v, got: %v", expectedPods, pods)
+			Logf("Waiting for expected pods for %s: %v, got: %v", serviceIP, expectedPods, pods)
 		}
 		if !passed {
 			return fmt.Errorf("service verification failed for:\n %s", cmd)
@@ -1467,7 +1461,7 @@ func (t *WebserverTest) BuildServiceSpec() *api.Service {
 // CreateWebserverRC creates rc-backed pods with the well-known webserver
 // configuration and records it for cleanup.
 func (t *WebserverTest) CreateWebserverRC(replicas int) *api.ReplicationController {
-	rcSpec := rcByName(t.name, replicas, t.image, t.Labels)
+	rcSpec := rcByNamePort(t.name, replicas, t.image, 80, t.Labels)
 	rcAct, err := t.createRC(rcSpec)
 	if err != nil {
 		Failf("Failed to create rc %s: %v", rcSpec.Name, err)

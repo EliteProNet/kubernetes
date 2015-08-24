@@ -155,7 +155,7 @@ func (d *NamespaceDescriber) Describe(namespace, name string) (string, error) {
 func describeNamespace(namespace *api.Namespace, resourceQuotaList *api.ResourceQuotaList, limitRangeList *api.LimitRangeList) (string, error) {
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", namespace.Name)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(namespace.Labels))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(namespace.Labels))
 		fmt.Fprintf(out, "Status:\t%s\n", string(namespace.Status.Phase))
 		if resourceQuotaList != nil {
 			fmt.Fprintf(out, "\n")
@@ -416,7 +416,7 @@ func describePod(pod *api.Pod, rcs []api.ReplicationController, events *api.Even
 		fmt.Fprintf(out, "Namespace:\t%s\n", pod.Namespace)
 		fmt.Fprintf(out, "Image(s):\t%s\n", makeImageList(&pod.Spec))
 		fmt.Fprintf(out, "Node:\t%s\n", pod.Spec.NodeName+"/"+pod.Status.HostIP)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(pod.Labels))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(pod.Labels))
 		if pod.DeletionTimestamp != nil {
 			fmt.Fprintf(out, "Status:\tTerminating (expires %s)\n", pod.DeletionTimestamp.Time.Format(time.RFC1123Z))
 			fmt.Fprintf(out, "Termination Grace Period:\t%ds\n", pod.DeletionGracePeriodSeconds)
@@ -437,11 +437,135 @@ func describePod(pod *api.Pod, rcs []api.ReplicationController, events *api.Even
 					c.Status)
 			}
 		}
+		describeVolumes(pod.Spec.Volumes, out)
 		if events != nil {
 			DescribeEvents(events, out)
 		}
 		return nil
 	})
+}
+
+func describeVolumes(volumes []api.Volume, out io.Writer) {
+	if volumes == nil || len(volumes) == 0 {
+		fmt.Fprint(out, "No volumes.\n")
+		return
+	}
+	fmt.Fprint(out, "Volumes:\n")
+	for _, volume := range volumes {
+		fmt.Fprintf(out, "  %v:\n", volume.Name)
+		switch {
+		case volume.VolumeSource.HostPath != nil:
+			printHostPathVolumeSource(volume.VolumeSource.HostPath, out)
+		case volume.VolumeSource.EmptyDir != nil:
+			printEmptyDirVolumeSource(volume.VolumeSource.EmptyDir, out)
+		case volume.VolumeSource.GCEPersistentDisk != nil:
+			printGCEPersistentDiskVolumeSource(volume.VolumeSource.GCEPersistentDisk, out)
+		case volume.VolumeSource.AWSElasticBlockStore != nil:
+			printAWSElasticBlockStoreVolumeSource(volume.VolumeSource.AWSElasticBlockStore, out)
+		case volume.VolumeSource.GitRepo != nil:
+			printGitRepoVolumeSource(volume.VolumeSource.GitRepo, out)
+		case volume.VolumeSource.Secret != nil:
+			printSecretVolumeSource(volume.VolumeSource.Secret, out)
+		case volume.VolumeSource.NFS != nil:
+			printNFSVolumeSource(volume.VolumeSource.NFS, out)
+		case volume.VolumeSource.ISCSI != nil:
+			printISCSIVolumeSource(volume.VolumeSource.ISCSI, out)
+		case volume.VolumeSource.Glusterfs != nil:
+			printGlusterfsVolumeSource(volume.VolumeSource.Glusterfs, out)
+		case volume.VolumeSource.PersistentVolumeClaim != nil:
+			printPersistentVolumeClaimVolumeSource(volume.VolumeSource.PersistentVolumeClaim, out)
+		case volume.VolumeSource.RBD != nil:
+			printRBDVolumeSource(volume.VolumeSource.RBD, out)
+		default:
+			fmt.Fprintf(out, "  <Volume Type Not Found>\n")
+		}
+	}
+}
+
+func printHostPathVolumeSource(hostPath *api.HostPathVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tHostPath (bare host directory volume)\n"+
+		"    Path:\t%v\n", hostPath.Path)
+}
+
+func printEmptyDirVolumeSource(emptyDir *api.EmptyDirVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tEmptyDir (a temporary directory that shares a pod's lifetime)\n"+
+		"    Medium:\t%v\n", emptyDir.Medium)
+}
+
+func printGCEPersistentDiskVolumeSource(gce *api.GCEPersistentDiskVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tGCEPersistentDisk (a Persistent Disk resource in Google Compute Engine)\n"+
+		"    PDName:\t%v\n"+
+		"    FSType:\t%v\n"+
+		"    Partition:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		gce.PDName, gce.FSType, gce.Partition, gce.ReadOnly)
+}
+
+func printAWSElasticBlockStoreVolumeSource(aws *api.AWSElasticBlockStoreVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tAWSElasticBlockStore (a Persistent Disk resource in AWS)\n"+
+		"    VolumeID:\t%v\n"+
+		"    FSType:\t%v\n"+
+		"    Partition:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		aws.VolumeID, aws.FSType, aws.Partition, aws.ReadOnly)
+}
+
+func printGitRepoVolumeSource(git *api.GitRepoVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tGitRepo (a volume that is pulled from git when the pod is created)\n"+
+		"    Repository:\t%v\n"+
+		"    Revision:\t%v\n",
+		git.Repository, git.Revision)
+}
+
+func printSecretVolumeSource(secret *api.SecretVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tSecret (a secret that should populate this volume)\n"+
+		"    SecretName:\t%v\n", secret.SecretName)
+}
+
+func printNFSVolumeSource(nfs *api.NFSVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tNFS (an NFS mount that lasts the lifetime of a pod)\n"+
+		"    Server:\t%v\n"+
+		"    Path:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		nfs.Server, nfs.Path, nfs.ReadOnly)
+}
+
+func printISCSIVolumeSource(iscsi *api.ISCSIVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tISCSI (an ISCSI Disk resource that is attached to a kubelet's host machine and then exposed to the pod)\n"+
+		"    TargetPortal:\t%v\n"+
+		"    IQN:\t%v\n"+
+		"    Lun:\t%v\n"+
+		"    FSType:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		iscsi.TargetPortal, iscsi.IQN, iscsi.Lun, iscsi.FSType, iscsi.ReadOnly)
+}
+
+func printGlusterfsVolumeSource(glusterfs *api.GlusterfsVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tGlusterfs (a Glusterfs mount on the host that shares a pod's lifetime)\n"+
+		"    EndpointsName:\t%v\n"+
+		"    Path:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		glusterfs.EndpointsName, glusterfs.Path, glusterfs.ReadOnly)
+}
+
+func printPersistentVolumeClaimVolumeSource(claim *api.PersistentVolumeClaimVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tPersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)\n"+
+		"    ClaimName:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		claim.ClaimName, claim.ReadOnly)
+}
+
+func printRBDVolumeSource(rbd *api.RBDVolumeSource, out io.Writer) {
+	fmt.Fprintf(out, "    Type:\tRBD (a Rados Block Device mount on the host that shares a pod's lifetime)\n"+
+		"    CephMonitors:\t%v\n"+
+		"    RBDImage:\t%v\n"+
+		"    FSType:\t%v\n"+
+		"    RBDPool:\t%v\n"+
+		"    RadosUser:\t%v\n"+
+		"    Keyring:\t%v\n"+
+		"    SecretRef:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		rbd.CephMonitors, rbd.RBDImage, rbd.FSType, rbd.RBDPool, rbd.RadosUser, rbd.Keyring, rbd.SecretRef, rbd.ReadOnly)
 }
 
 type PersistentVolumeDescriber struct {
@@ -460,7 +584,7 @@ func (d *PersistentVolumeDescriber) Describe(namespace, name string) (string, er
 
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", pv.Name)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(pv.Labels))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(pv.Labels))
 		fmt.Fprintf(out, "Status:\t%s\n", pv.Status.Phase)
 		if pv.Spec.ClaimRef != nil {
 			fmt.Fprintf(out, "Claim:\t%s\n", pv.Spec.ClaimRef.Namespace+"/"+pv.Spec.ClaimRef.Name)
@@ -487,7 +611,7 @@ func (d *PersistentVolumeClaimDescriber) Describe(namespace, name string) (strin
 		return "", err
 	}
 
-	labels := formatLabels(pvc.Labels)
+	labels := labels.FormatLabels(pvc.Labels)
 	storage := pvc.Spec.Resources.Requests[api.ResourceStorage]
 	capacity := ""
 	accessModes := ""
@@ -632,10 +756,13 @@ func describeReplicationController(controller *api.ReplicationController, events
 		} else {
 			fmt.Fprintf(out, "Image(s):\t%s\n", "<no template>")
 		}
-		fmt.Fprintf(out, "Selector:\t%s\n", formatLabels(controller.Spec.Selector))
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(controller.Labels))
+		fmt.Fprintf(out, "Selector:\t%s\n", labels.FormatLabels(controller.Spec.Selector))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(controller.Labels))
 		fmt.Fprintf(out, "Replicas:\t%d current / %d desired\n", controller.Status.Replicas, controller.Spec.Replicas)
 		fmt.Fprintf(out, "Pods Status:\t%d Running / %d Waiting / %d Succeeded / %d Failed\n", running, waiting, succeeded, failed)
+		if controller.Spec.Template != nil {
+			describeVolumes(controller.Spec.Template.Spec.Volumes, out)
+		}
 		if events != nil {
 			DescribeEvents(events, out)
 		}
@@ -663,8 +790,8 @@ func describeSecret(secret *api.Secret) (string, error) {
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", secret.Name)
 		fmt.Fprintf(out, "Namespace:\t%s\n", secret.Namespace)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(secret.Labels))
-		fmt.Fprintf(out, "Annotations:\t%s\n", formatLabels(secret.Annotations))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(secret.Labels))
+		fmt.Fprintf(out, "Annotations:\t%s\n", labels.FormatLabels(secret.Annotations))
 
 		fmt.Fprintf(out, "\nType:\t%s\n", secret.Type)
 
@@ -724,8 +851,8 @@ func describeService(service *api.Service, endpoints *api.Endpoints, events *api
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", service.Name)
 		fmt.Fprintf(out, "Namespace:\t%s\n", service.Namespace)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(service.Labels))
-		fmt.Fprintf(out, "Selector:\t%s\n", formatLabels(service.Spec.Selector))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(service.Labels))
+		fmt.Fprintf(out, "Selector:\t%s\n", labels.FormatLabels(service.Spec.Selector))
 		fmt.Fprintf(out, "Type:\t%s\n", service.Spec.Type)
 		fmt.Fprintf(out, "IP:\t%s\n", service.Spec.ClusterIP)
 		if len(service.Status.LoadBalancer.Ingress) > 0 {
@@ -787,7 +914,7 @@ func describeServiceAccount(serviceAccount *api.ServiceAccount, tokens []api.Sec
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", serviceAccount.Name)
 		fmt.Fprintf(out, "Namespace:\t%s\n", serviceAccount.Namespace)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(serviceAccount.Labels))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(serviceAccount.Labels))
 		fmt.Fprintln(out)
 
 		var (
@@ -873,7 +1000,7 @@ func (d *NodeDescriber) Describe(namespace, name string) (string, error) {
 func describeNode(node *api.Node, pods []*api.Pod, events *api.EventList) (string, error) {
 	return tabbedString(func(out io.Writer) error {
 		fmt.Fprintf(out, "Name:\t%s\n", node.Name)
-		fmt.Fprintf(out, "Labels:\t%s\n", formatLabels(node.Labels))
+		fmt.Fprintf(out, "Labels:\t%s\n", labels.FormatLabels(node.Labels))
 		fmt.Fprintf(out, "CreationTimestamp:\t%s\n", node.CreationTimestamp.Time.Format(time.RFC1123Z))
 		if len(node.Status.Conditions) > 0 {
 			fmt.Fprint(out, "Conditions:\n  Type\tStatus\tLastHeartbeatTime\tLastTransitionTime\tReason\tMessage\n")

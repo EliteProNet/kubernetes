@@ -32,6 +32,10 @@ import (
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util"
 
+	// TODO: enable when exapi problems are fixed #13083
+	//_ "k8s.io/kubernetes/pkg/expapi"
+	//_ "k8s.io/kubernetes/pkg/expapi/v1"
+
 	flag "github.com/spf13/pflag"
 )
 
@@ -121,7 +125,7 @@ func TestList(t *testing.T) {
 	roundTripSame(t, item)
 }
 
-var nonRoundTrippableTypes = util.NewStringSet()
+var nonRoundTrippableTypes = util.NewStringSet("ThirdPartyResource")
 var nonInternalRoundTrippableTypes = util.NewStringSet("List", "ListOptions", "PodExecOptions", "PodAttachOptions")
 var nonRoundTrippableTypesByVersion = map[string][]string{}
 

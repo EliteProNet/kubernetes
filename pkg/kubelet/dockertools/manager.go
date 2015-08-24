@@ -581,7 +581,8 @@ func (dm *DockerManager) runContainer(
 	opts *kubecontainer.RunContainerOptions,
 	ref *api.ObjectReference,
 	netMode string,
-	ipcMode string) (string, error) {
+	ipcMode string,
+	utsMode string) (string, error) {
 
 	dockerName := KubeletContainerName{
 		PodFullName:   kubecontainer.GetPodFullName(pod),
@@ -695,6 +696,7 @@ func (dm *DockerManager) runContainer(
 		Binds:        binds,
 		NetworkMode:  netMode,
 		IpcMode:      ipcMode,
+		UTSMode:      utsMode,
 		// Memory and CPU are set here for newer versions of Docker (1.6+).
 		Memory:     memoryLimit,
 		MemorySwap: -1,
@@ -1155,7 +1157,7 @@ func (dm *DockerManager) KillPod(pod *api.Pod, runningPod kubecontainer.Pod) err
 				return
 			}
 
-			err := dm.killContainer(container.ID, containerSpec, pod)
+			err := dm.KillContainerInPod(container.ID, containerSpec, pod)
 			if err != nil {
 				glog.Errorf("Failed to delete container: %v; Skipping pod %q", err, runningPod.ID)
 				errs <- err
@@ -1168,7 +1170,7 @@ func (dm *DockerManager) KillPod(pod *api.Pod, runningPod kubecontainer.Pod) err
 			glog.Errorf("Failed tearing down the infra container: %v", err)
 			errs <- err
 		}
-		if err := dm.killContainer(networkContainer.ID, networkSpec, pod); err != nil {
+		if err := dm.KillContainerInPod(networkContainer.ID, networkSpec, pod); err != nil {
 			glog.Errorf("Failed to delete container: %v; Skipping pod %q", err, runningPod.ID)
 			errs <- err
 		}
@@ -1247,9 +1249,19 @@ func (dm *DockerManager) killContainer(containerID types.UID, container *api.Con
 
 	if pod != nil && container != nil && container.Lifecycle != nil && container.Lifecycle.PreStop != nil {
 		glog.V(4).Infof("Running preStop hook for container %q", name)
-		// TODO: timebox PreStop execution to at most gracePeriod
-		if err := dm.runner.Run(ID, pod, container, container.Lifecycle.PreStop); err != nil {
-			glog.Errorf("preStop hook for container %q failed: %v", name, err)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer util.HandleCrash()
+			if err := dm.runner.Run(ID, pod, container, container.Lifecycle.PreStop); err != nil {
+				glog.Errorf("preStop hook for container %q failed: %v", name, err)
+			}
+		}()
+		select {
+		case <-time.After(time.Duration(gracePeriod) * time.Second):
+			glog.V(2).Infof("preStop hook for container %q did not complete in %d seconds", name, gracePeriod)
+		case <-done:
+			glog.V(4).Infof("preStop hook for container %q completed", name)
 		}
 		gracePeriod -= int64(util.Now().Sub(start.Time).Seconds())
 	}
@@ -1339,7 +1351,11 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 		return "", err
 	}
 
-	id, err := dm.runContainer(pod, container, opts, ref, netMode, ipcMode)
+	utsMode := ""
+	if pod.Spec.HostNetwork {
+		utsMode = "host"
+	}
+	id, err := dm.runContainer(pod, container, opts, ref, netMode, ipcMode, utsMode)
 	if err != nil {
 		return "", err
 	}
@@ -1352,7 +1368,7 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 	if container.Lifecycle != nil && container.Lifecycle.PostStart != nil {
 		handlerErr := dm.runner.Run(id, pod, container, container.Lifecycle.PostStart)
 		if handlerErr != nil {
-			dm.killContainer(types.UID(id), container, pod)
+			dm.KillContainerInPod(types.UID(id), container, pod)
 			return kubeletTypes.DockerID(""), fmt.Errorf("failed to call event handler: %v", handlerErr)
 		}
 	}
@@ -1402,7 +1418,7 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 	// This resolv.conf file is shared by all containers of the same pod, and needs to be modified only once per pod.
 	// we modify it when the pause container is created since it is the first container created in the pod since it holds
 	// the networking namespace.
-	if container.Name == PodInfraContainerName {
+	if container.Name == PodInfraContainerName && utsMode != "host" {
 		err = addNDotsOption(containerInfo.ResolvConfPath)
 	}
 

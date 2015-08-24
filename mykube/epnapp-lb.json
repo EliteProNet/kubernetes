@@ -1,0 +1,22 @@
+{
+   "kind":"Service",
+   "apiVersion":"v1",
+   "metadata":{
+      "name":"epnapp",
+      "labels":{
+         "app":"epnapp"
+      }
+   },
+   "spec":{
+      "ports": [
+         {
+           "port":8080,
+           "targetPort":"go-server"
+         }
+      ],
+      "selector":{
+         "app":"epnapp"
+      },
+      "type": "LoadBalancer"
+   }
+}

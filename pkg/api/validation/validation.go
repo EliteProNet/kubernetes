@@ -1100,12 +1100,11 @@ func ValidateService(service *api.Service) errs.ValidationErrorList {
 		}
 	}
 
-	for _, ip := range service.Spec.DeprecatedPublicIPs {
+	for _, ip := range service.Spec.ExternalIPs {
 		if ip == "0.0.0.0" {
-			allErrs = append(allErrs, errs.NewFieldInvalid("spec.publicIPs", ip, "is not an IP address"))
-		} else if util.IsValidIPv4(ip) && net.ParseIP(ip).IsLoopback() {
-			allErrs = append(allErrs, errs.NewFieldInvalid("spec.publicIPs", ip, "publicIP cannot be a loopback"))
+			allErrs = append(allErrs, errs.NewFieldInvalid("spec.externalIPs", ip, "is not an IP address"))
 		}
+		allErrs = append(allErrs, validateIpIsNotLinkLocalOrLoopback(ip, "spec.externalIPs")...)
 	}
 
 	if service.Spec.Type == "" {
@@ -1744,23 +1743,32 @@ func validateEndpointSubsets(subsets []api.EndpointSubset) errs.ValidationErrorL
 	return allErrs
 }
 
-var linkLocalNet *net.IPNet
-
 func validateEndpointAddress(address *api.EndpointAddress) errs.ValidationErrorList {
-	if linkLocalNet == nil {
-		var err error
-		_, linkLocalNet, err = net.ParseCIDR("169.254.0.0/16")
-		if err != nil {
-			glog.Errorf("Failed to parse link-local CIDR: %v", err)
-		}
-	}
-
 	allErrs := errs.ValidationErrorList{}
 	if !util.IsValidIPv4(address.IP) {
 		allErrs = append(allErrs, errs.NewFieldInvalid("ip", address.IP, "invalid IPv4 address"))
+		return allErrs
 	}
-	if linkLocalNet.Contains(net.ParseIP(address.IP)) {
-		allErrs = append(allErrs, errs.NewFieldInvalid("ip", address.IP, "may not be in the link-local range (169.254.0.0/16)"))
+	return validateIpIsNotLinkLocalOrLoopback(address.IP, "ip")
+}
+
+func validateIpIsNotLinkLocalOrLoopback(ipAddress, fieldName string) errs.ValidationErrorList {
+	// We disallow some IPs as endpoints or external-ips.  Specifically, loopback addresses are
+	// nonsensical and link-local addresses tend to be used for node-centric purposes (e.g. metadata service).
+	allErrs := errs.ValidationErrorList{}
+	ip := net.ParseIP(ipAddress)
+	if ip == nil {
+		allErrs = append(allErrs, errs.NewFieldInvalid(fieldName, ipAddress, "not a valid IP address"))
+		return allErrs
+	}
+	if ip.IsLoopback() {
+		allErrs = append(allErrs, errs.NewFieldInvalid(fieldName, ipAddress, "may not be in the loopback range (127.0.0.0/8)"))
+	}
+	if ip.IsLinkLocalUnicast() {
+		allErrs = append(allErrs, errs.NewFieldInvalid(fieldName, ipAddress, "may not be in the link-local range (169.254.0.0/16)"))
+	}
+	if ip.IsLinkLocalMulticast() {
+		allErrs = append(allErrs, errs.NewFieldInvalid(fieldName, ipAddress, "may not be in the link-local multicast range (224.0.0.0/24)"))
 	}
 	return allErrs
 }
@@ -1813,6 +1821,10 @@ func ValidateSecurityContext(sc *api.SecurityContext) errs.ValidationErrorList {
 		}
 	}
 	return allErrs
+}
+
+func ValidateThirdPartyResourceUpdate(old, update *api.ThirdPartyResource) errs.ValidationErrorList {
+	return ValidateThirdPartyResource(update)
 }
 
 func ValidateThirdPartyResource(obj *api.ThirdPartyResource) errs.ValidationErrorList {
