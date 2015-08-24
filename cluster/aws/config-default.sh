@@ -14,22 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ZONE=${KUBE_AWS_ZONE:-us-west-2a}
+ZONE=${KUBE_AWS_ZONE:-us-west-2b}
 MASTER_SIZE=${MASTER_SIZE:-t2.micro}
 MINION_SIZE=${MINION_SIZE:-t2.micro}
-NUM_MINIONS=${NUM_MINIONS:-4}
+NUM_MINIONS=${NUM_MINIONS:-3}
 
 # Optional: Set AWS_S3_BUCKET to the name of an S3 bucket to use for uploading binaries
 # (otherwise a unique bucket name will be generated for you)
 #  AWS_S3_BUCKET=kubernetes-artifacts
 
 # Because regions are globally named, we want to create in a single region; default to us-east-1
-AWS_S3_REGION=${AWS_S3_REGION:-us-east-1}
+AWS_S3_REGION=${AWS_S3_REGION:-us-west-2b}
 
 # Which docker storage mechanism to use.
 DOCKER_STORAGE=${DOCKER_STORAGE:-aufs}
 
-INSTANCE_PREFIX="${KUBE_AWS_INSTANCE_PREFIX:-kubernetes}"
+INSTANCE_PREFIX="${KUBE_AWS_INSTANCE_PREFIX:-epnkube}"
 CLUSTER_ID=${INSTANCE_PREFIX}
 AWS_SSH_KEY=${AWS_SSH_KEY:-$HOME/.ssh/kube_aws_rsa}
 IAM_PROFILE_MASTER="kubernetes-master"
@@ -38,13 +38,13 @@ IAM_PROFILE_MINION="kubernetes-minion"
 LOG="/dev/null"
 
 MASTER_DISK_TYPE="${MASTER_DISK_TYPE:-gp2}"
-MASTER_DISK_SIZE=${MASTER_DISK_SIZE:-20}
+MASTER_DISK_SIZE=${MASTER_DISK_SIZE:-10}
 
 MASTER_NAME="${INSTANCE_PREFIX}-master"
 MASTER_TAG="${INSTANCE_PREFIX}-master"
 MINION_TAG="${INSTANCE_PREFIX}-minion"
 MINION_SCOPES=""
-POLL_SLEEP_INTERVAL=3
+POLL_SLEEP_INTERVAL=5
 SERVICE_CLUSTER_IP_RANGE="10.0.0.0/16"  # formerly PORTAL_NET
 CLUSTER_IP_RANGE="${CLUSTER_IP_RANGE:-10.244.0.0/16}"
 MASTER_IP_RANGE="${MASTER_IP_RANGE:-10.246.0.0/24}"
@@ -88,7 +88,7 @@ ADMISSION_CONTROL=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContext
 ENABLE_MINION_PUBLIC_IP=${KUBE_ENABLE_MINION_PUBLIC_IP:-true}
 
 # OS options for minions
-KUBE_OS_DISTRIBUTION="${KUBE_OS_DISTRIBUTION:-vivid}"
+KUBE_OS_DISTRIBUTION="${KUBE_OS_DISTRIBUTION:-trusty}"
 KUBE_MINION_IMAGE="${KUBE_MINION_IMAGE:-}"
 COREOS_CHANNEL="${COREOS_CHANNEL:-alpha}"
 CONTAINER_RUNTIME="${KUBE_CONTAINER_RUNTIME:-docker}"
