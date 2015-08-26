@@ -199,7 +199,7 @@ func (s *CMServer) Run(_ []string) error {
 	}
 
 	nodeController := nodecontroller.NewNodeController(cloud, kubeClient,
-		s.PodEvictionTimeout, nodecontroller.NewPodEvictor(util.NewTokenBucketRateLimiter(s.DeletingPodsQps, s.DeletingPodsBurst)),
+		s.PodEvictionTimeout, util.NewTokenBucketRateLimiter(s.DeletingPodsQps, s.DeletingPodsBurst),
 		s.NodeMonitorGracePeriod, s.NodeStartupGracePeriod, s.NodeMonitorPeriod, &s.ClusterCIDR, s.AllocateNodeCIDRs)
 	nodeController.Run(s.NodeSyncPeriod)
 
@@ -272,7 +272,7 @@ func (s *CMServer) Run(_ []string) error {
 	// if err != nil {
 	// 	glog.Fatalf("Invalid API configuration: %v", err)
 	// }
-	// horizontalPodAutoscalerController := autoscalercontroller.New(expClient)
+	// horizontalPodAutoscalerController := autoscalercontroller.New(kubeClient, expClient)
 	// horizontalPodAutoscalerController.Run(s.NodeSyncPeriod)
 
 	select {}

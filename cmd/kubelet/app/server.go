@@ -417,12 +417,12 @@ func (s *KubeletServer) Run(kcfg *KubeletConfig) error {
 
 	if s.HealthzPort > 0 {
 		healthz.DefaultHealthz()
-		go util.Forever(func() {
+		go util.Until(func() {
 			err := http.ListenAndServe(net.JoinHostPort(s.HealthzBindAddress.String(), strconv.Itoa(s.HealthzPort)), nil)
 			if err != nil {
 				glog.Errorf("Starting health server failed: %v", err)
 			}
-		}, 5*time.Second)
+		}, 5*time.Second, util.NeverStop)
 	}
 
 	if s.RunOnce {
@@ -642,7 +642,11 @@ func RunKubelet(kcfg *KubeletConfig, builder KubeletBuilder) error {
 	} else {
 		glog.Warning("No api server defined - no events will be sent to API server.")
 	}
-	capabilities.Setup(kcfg.AllowPrivileged, kcfg.HostNetworkSources, 0)
+
+	privilegedSources := capabilities.PrivilegedSources{
+		HostNetworkSources: kcfg.HostNetworkSources,
+	}
+	capabilities.Setup(kcfg.AllowPrivileged, privilegedSources, 0)
 
 	credentialprovider.SetPreferredDockercfgPath(kcfg.RootDirectory)
 
@@ -671,18 +675,18 @@ func RunKubelet(kcfg *KubeletConfig, builder KubeletBuilder) error {
 
 func startKubelet(k KubeletBootstrap, podCfg *config.PodConfig, kc *KubeletConfig) {
 	// start the kubelet
-	go util.Forever(func() { k.Run(podCfg.Updates()) }, 0)
+	go util.Until(func() { k.Run(podCfg.Updates()) }, 0, util.NeverStop)
 
 	// start the kubelet server
 	if kc.EnableServer {
-		go util.Forever(func() {
+		go util.Until(func() {
 			k.ListenAndServe(kc.Address, kc.Port, kc.TLSOptions, kc.EnableDebuggingHandlers)
-		}, 0)
+		}, 0, util.NeverStop)
 	}
 	if kc.ReadOnlyPort > 0 {
-		go util.Forever(func() {
+		go util.Until(func() {
 			k.ListenAndServeReadOnly(kc.Address, kc.ReadOnlyPort)
-		}, 0)
+		}, 0, util.NeverStop)
 	}
 }
 

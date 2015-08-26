@@ -18,19 +18,16 @@ package etcd
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/api/rest/resttest"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
-	"k8s.io/kubernetes/pkg/registry/resourcequota"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/tools"
 	"k8s.io/kubernetes/pkg/tools/etcdtest"
@@ -73,11 +70,6 @@ func validChangedResourceQuota() *api.ResourceQuota {
 	return resourcequota
 }
 
-func TestStorage(t *testing.T) {
-	storage, _, _ := newStorage(t)
-	resourcequota.NewRegistry(storage)
-}
-
 func TestCreate(t *testing.T) {
 	storage, _, fakeClient := newStorage(t)
 	test := resttest.New(t, storage, fakeClient.SetError)
@@ -86,6 +78,12 @@ func TestCreate(t *testing.T) {
 	test.TestCreate(
 		// valid
 		resourcequota,
+		func(ctx api.Context, obj runtime.Object) error {
+			return registrytest.SetObject(fakeClient, storage.KeyFunc, ctx, obj)
+		},
+		func(ctx api.Context, obj runtime.Object) (runtime.Object, error) {
+			return registrytest.GetObject(fakeClient, storage.KeyFunc, storage.NewFunc, ctx, obj)
+		},
 		// invalid
 		&api.ResourceQuota{
 			ObjectMeta: api.ObjectMeta{Name: "_-a123-a_"},
@@ -200,36 +198,6 @@ func TestEtcdList(t *testing.T) {
 		func(resourceVersion uint64) {
 			registrytest.SetResourceVersion(fakeClient, resourceVersion)
 		})
-}
-
-func TestEtcdCreateFailsWithoutNamespace(t *testing.T) {
-	storage, _, _ := newStorage(t)
-	resourcequota := validNewResourceQuota()
-	resourcequota.Namespace = ""
-	_, err := storage.Create(api.NewContext(), resourcequota)
-	// Accept "namespace" or "Namespace".
-	if err == nil || !strings.Contains(err.Error(), "amespace") {
-		t.Fatalf("expected error that namespace was missing from context, got: %v", err)
-	}
-}
-
-func TestEtcdCreateAlreadyExisting(t *testing.T) {
-	storage, _, fakeClient := newStorage(t)
-	ctx := api.NewDefaultContext()
-	key, _ := storage.KeyFunc(ctx, "foo")
-	key = etcdtest.AddPrefix(key)
-	fakeClient.Data[key] = tools.EtcdResponseWithError{
-		R: &etcd.Response{
-			Node: &etcd.Node{
-				Value: runtime.EncodeOrDie(testapi.Codec(), &api.ResourceQuota{ObjectMeta: api.ObjectMeta{Name: "foo"}}),
-			},
-		},
-		E: nil,
-	}
-	_, err := storage.Create(ctx, validNewResourceQuota())
-	if !errors.IsAlreadyExists(err) {
-		t.Errorf("Unexpected error returned: %#v", err)
-	}
 }
 
 func TestEtcdUpdateStatus(t *testing.T) {

@@ -129,6 +129,9 @@ func newTestKubelet(t *testing.T) *TestKubelet {
 	kubelet.volumeManager = newVolumeManager()
 	kubelet.containerManager, _ = newContainerManager(mockCadvisor, "", "", "")
 	kubelet.networkConfigured = true
+	fakeClock := &util.FakeClock{Time: time.Now()}
+	kubelet.backOff = util.NewBackOff(time.Second, time.Minute)
+	kubelet.backOff.Clock = fakeClock
 	return &TestKubelet{kubelet, fakeRuntime, mockCadvisor, fakeKubeClient, fakeMirrorClient}
 }
 
@@ -2828,7 +2831,9 @@ func TestHostNetworkAllowed(t *testing.T) {
 	kubelet := testKubelet.kubelet
 
 	capabilities.SetForTests(capabilities.Capabilities{
-		HostNetworkSources: []string{ApiserverSource, FileSource},
+		PrivilegedSources: capabilities.PrivilegedSources{
+			HostNetworkSources: []string{ApiserverSource, FileSource},
+		},
 	})
 	pod := &api.Pod{
 		ObjectMeta: api.ObjectMeta{
@@ -2858,7 +2863,9 @@ func TestHostNetworkDisallowed(t *testing.T) {
 	kubelet := testKubelet.kubelet
 
 	capabilities.SetForTests(capabilities.Capabilities{
-		HostNetworkSources: []string{},
+		PrivilegedSources: capabilities.PrivilegedSources{
+			HostNetworkSources: []string{},
+		},
 	})
 	pod := &api.Pod{
 		ObjectMeta: api.ObjectMeta{

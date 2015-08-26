@@ -52,7 +52,7 @@ When using token authentication from an http client the apiserver expects an `Au
 header with a value of `Bearer SOMETOKEN`.
 
 **OpenID Connect ID Token** is enabled by passing the following options to the apiserver:
-- `--oidc-issuer-url` (required) tells the apiserver where to connect to the OpenID provider.
+- `--oidc-issuer-url` (required) tells the apiserver where to connect to the OpenID provider. Only HTTPS scheme will be accepted.
 - `--oidc-client-id` (required) is used by apiserver to verify the audience of the token.
 A valid [ID token](http://openid.net/specs/openid-connect-core-1_0.html#IDToken) MUST have this
 client-id in its `aud` claims.
@@ -62,7 +62,7 @@ to the OpenID provider.
 will be used, which should be unique and immutable under the issuer's domain. Cluster administrator can
 choose other claims such as `email` to use as the user name, but the uniqueness and immutability is not guaranteed.
 
-Please note that this flag is still experimental until we settle more on how to handle the mapping of the OpenID user to the Kubernetes user. Thus futher changes are possible.
+Please note that this flag is still experimental until we settle more on how to handle the mapping of the OpenID user to the Kubernetes user. Thus further changes are possible.
 
 Currently, the ID token will be obtained by some third-party app. This means the app and apiserver
 MUST share the `--oidc-client-id`.
