@@ -100,6 +100,10 @@ GCE_DEFAULT_SKIP_TESTS=(
 GCE_FLAKY_TESTS=(
     "DaemonRestart"
     "ResourceUsage"
+    "monotonically\sincreasing\srestart\scount"
+    "then\sschedule\sit\son\sanother\shost" # file: pd.go, issue: #13257
+    "should\sbe\sable\sto\schange\sthe\stype\sand\snodeport\ssettings\sof\sa\sservice" # file: service.go, issue: #13032
+    "allows\sscheduling\sof\spods\son\sa\sminion\safter\sit\srejoins\sthe\scluster" # file: resize_nodes.go, issue: #13258
     )
 
 # Tests which are not able to be run in parallel.
